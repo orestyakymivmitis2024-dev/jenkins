@@ -1,0 +1,9 @@
+# Packages allowed to run install scripts (pnpm 11 blocks them by default)
+allowBuilds:
+  esbuild: true
+  workerd: true
+  sharp: true
+# Very fresh releases that pnpm's minimum-release-age policy would otherwise hold back
+minimumReleaseAgeExclude:
+  - miniflare@5.20261001.0-alpha
+  - wrangler@4.147.0

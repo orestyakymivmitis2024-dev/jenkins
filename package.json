@@ -1,0 +1,22 @@
+{
+  "name": "cf-pipeline-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.0.0 <23" },
+  "scripts": {
+    "dev": "astro dev --host 0.0.0.0",
+    "build": "astro build",
+    "check:env": "node scripts/check-target-env.mjs",
+    "preview": "wrangler dev -c dist/server/wrangler.json --ip 0.0.0.0 --port 8787"
+  },
+  "dependencies": {
+    "astro": "^7.3.5",
+    "@astrojs/cloudflare": "^14.3.3"
+  },
+  "devDependencies": {
+    "wrangler": "^4.147.0",
+    "@cloudflare/workers-types": "^4.20260101.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,54 @@
+---
+// Rendered on the Worker for every request.
+import { env } from 'cloudflare:workers';
+
+const build = {
+  branch: import.meta.env.PUBLIC_BUILD_BRANCH ?? 'local',
+  time: import.meta.env.PUBLIC_BUILD_TIME ?? 'unknown',
+  tier: import.meta.env.PUBLIC_DEPLOY_TIER ?? 'local',
+};
+
+const raw = await env.KV_CACHE.get('heartbeat');
+const heartbeat = raw ? JSON.parse(raw) : null;
+const renderedAt = new Date().toISOString();
+---
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CF pipeline lab · {build.tier}</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 720px; margin: 3rem auto; padding: 0 1rem; color: #222; }
+      h1 { margin-bottom: .25rem; }
+      .tier { display: inline-block; padding: .2rem .6rem; border-radius: 999px; background: #f48120; color: #fff; font-weight: 600; }
+      table { border-collapse: collapse; width: 100%; margin-top: 1.5rem; }
+      td { padding: .5rem .75rem; border-bottom: 1px solid #eee; vertical-align: top; }
+      td:first-child { color: #666; width: 40%; }
+      code { background: #f4f4f4; padding: .1rem .3rem; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>Cloudflare pipeline lab</h1>
+    <span class="tier">{build.tier}</span>
+
+    <table>
+      <tr><td>Git branch (build time)</td><td><code>{build.branch}</code></td></tr>
+      <tr><td>Built at</td><td><code>{build.time}</code></td></tr>
+      <tr><td>wrangler env (TIER var)</td><td><code>{env.TIER}</code></td></tr>
+      <tr><td>Rendered on the Worker at</td><td><code>{renderedAt}</code></td></tr>
+      <tr>
+        <td>KV heartbeat (written by cron)</td>
+        <td>
+          {heartbeat
+            ? <><code>{heartbeat.writtenAt}</code><br />by <code>{heartbeat.writer}</code></>
+            : <em>empty — no cron has written to this KV yet</em>}
+        </td>
+      </tr>
+    </table>
+
+    <p style="margin-top:2rem;color:#666">
+      On a <b>feature branch</b> the heartbeat should come from <code>develop (staging)</code>:
+      branches share develop's KV but have no cron of their own.
+    </p>
+  </body>
+</html>

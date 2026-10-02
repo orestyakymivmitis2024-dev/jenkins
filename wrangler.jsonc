@@ -1,0 +1,42 @@
+{
+  // Base name. Real Worker names always come from `wrangler deploy --name ...` in CI.
+  "name": "lab",
+  "compatibility_date": "2026-02-19",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Our own entry: Astro's request handler + a cron handler (see src/worker-entry.ts).
+  "main": "./src/worker-entry.ts",
+  "assets": { "binding": "ASSETS" },
+
+  // Only our custom domains — no *.workers.dev address and no preview URLs
+  // (also avoids wrangler asking to register a workers.dev subdomain on first deploy).
+  "workers_dev": false,
+  "preview_urls": false,
+
+  // Top level = what "release" (beta / prod) inherits. Cron runs every minute.
+  "triggers": { "crons": ["* * * * *"] },
+  "kv_namespaces": [{ "binding": "KV_CACHE" }],
+
+  // NOTE: vars / kv_namespaces / triggers are NOT inherited by named envs —
+  // every env block repeats what it needs.
+  "env": {
+    // Feature-branch previews: READ the KV that develop warms, never write, no cron.
+    "branch": {
+      "vars": { "TIER": "branch (staging)" },
+      "kv_namespaces": [{ "binding": "KV_CACHE", "id": "REPLACE_WITH_DEVELOP_KV_NAMESPACE_ID" }],
+      "triggers": { "crons": [] }
+    },
+    // develop: the ONLY staging writer — its cron fills the shared KV.
+    "develop": {
+      "vars": { "TIER": "develop (staging)" },
+      "kv_namespaces": [{ "binding": "KV_CACHE", "id": "REPLACE_WITH_DEVELOP_KV_NAMESPACE_ID" }],
+      "triggers": { "crons": ["* * * * *"] }
+    },
+    // beta + production: no id -> wrangler auto-provisions a separate KV per Worker on first deploy.
+    "release": {
+      "vars": { "TIER": "release (beta / prod)" },
+      "kv_namespaces": [{ "binding": "KV_CACHE" }],
+      "triggers": { "crons": ["* * * * *"] }
+    }
+  }
+}
