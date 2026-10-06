@@ -48,8 +48,13 @@ pipeline {
         stage('Init: worker identity') {
             steps {
                 script {
-                    def branch = env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'local'
-                    def slug   = branch.toLowerCase()
+                    // A single-branch Pipeline job (what we have here) reports the branch
+                    // via GIT_BRANCH as "origin/develop", not "develop" — only a Multibranch
+                    // Pipeline job would set BRANCH_NAME without the remote prefix. Strip it
+                    // so branch == 'develop' actually matches.
+                    def rawBranch = env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'local'
+                    def branch    = rawBranch.replaceFirst(/^origin\//, '')
+                    def slug      = branch.toLowerCase()
                         .replaceAll('[^a-z0-9-]', '-')
                         .replaceAll('-+', '-')
                         .replaceAll('^-|-$', '')
@@ -155,12 +160,17 @@ pipeline {
                         string(credentialsId: 'cloudflare-account-id', variable: 'CLOUDFLARE_ACCOUNT_ID')
                     ]) {
                         docker.image(env.BUILD_IMAGE).inside {
+                            // dist/server/wrangler.json is already flattened for one specific
+                            // env — clear CLOUDFLARE_ENV here so wrangler doesn't try (and fail)
+                            // to re-resolve an env block that no longer exists in this file.
+                            withEnv(['CLOUDFLARE_ENV=']) {
                             sh """
                                 npx -y pnpm@${env.PNPM_VERSION} dlx wrangler deploy \
                                   -c dist/server/wrangler.json \
                                   --name ${env.WORKER_NAME} \
                                   --domain ${env.WORKER_DOMAIN}
                             """
+                            }
                         }
                     }
                 }
