@@ -1,9 +1,15 @@
 // cf-pipeline-lab — Jenkinsfile
 //
 // Lab version of the company's Cloudflare pipeline mechanics: one small Astro/Workers
-// app instead of many brands, but the same core idea —
-//   CLOUDFLARE_ENV (develop | branch | release) decides which wrangler.jsonc env block
-//   gets used, which in turn decides the Worker's name, domain and KV namespace.
+// app instead of many brands, but the same core idea. Two separate things decide the
+// outcome of a build:
+//   - the git BRANCH decides WHERE THE CODE COMES FROM (Jenkins reads this itself)
+//   - CLOUDFLARE_ENV (develop | branch | release) decides WHICH wrangler.jsonc env
+//     block the build uses — the Worker's name, domain and KV namespace
+// This file derives CLOUDFLARE_ENV FROM the branch, same as the company pipeline:
+//   branch == 'develop'                  -> CLOUDFLARE_ENV=develop (writes the shared KV)
+//   any other branch                     -> CLOUDFLARE_ENV=branch  (reads the shared KV)
+//   DEPLOY_TARGET=beta/production (manual, develop only) -> CLOUDFLARE_ENV=release
 //
 // EDIT THIS before first run:
 env.LAB_DOMAIN = 'grona.online'   // <-- your own domain from Cloudflare
@@ -12,24 +18,17 @@ pipeline {
     agent any
 
     parameters {
-        // Matches the job's own parameter, but redeclaring it here means the Jenkinsfile
-        // stays the single source of truth if this pipeline is ever reused for another job.
+        // Mirrors the company's DEPLOY_TARGET: staging is automatic (derived from the
+        // branch below), beta/production are a deliberate manual choice. 'staging' here
+        // means "let the branch decide" — it is NOT a wrangler env name by itself.
         choice(
-            name: 'CLOUDFLARE_ENV',
-            choices: ['develop', 'branch', 'release'],
-            description: 'Which wrangler env block to build/deploy'
-        )
-        // Only used when CLOUDFLARE_ENV = release — mirrors the company's
-        // DEPLOY_TARGET (beta/production) being a deliberate, manual choice.
-        choice(
-            name: 'RELEASE_TIER',
-            choices: ['beta', 'production'],
-            description: 'Only used when CLOUDFLARE_ENV=release'
+            name: 'DEPLOY_TARGET',
+            choices: ['staging', 'beta', 'production'],
+            description: 'staging = auto, derived from the branch. beta/production = manual promotion.'
         )
     }
 
     options {
-        timestamps()
         disableConcurrentBuilds()
     }
 
@@ -54,28 +53,44 @@ pipeline {
                         .replaceAll('[^a-z0-9-]', '-')
                         .replaceAll('-+', '-')
                         .replaceAll('^-|-$', '')
+                    boolean isDevelop = (branch == 'develop')
 
-                    if (params.CLOUDFLARE_ENV == 'release') {
-                        env.CF_TIER      = (params.RELEASE_TIER == 'production') ? 'prod' : 'beta'
-                        env.WORKER_NAME  = "lab-xsite-${env.CF_TIER}"
-                        env.WORKER_DOMAIN = (env.CF_TIER == 'prod')
-                            ? "www.${env.LAB_DOMAIN}"
-                            : "beta.${env.LAB_DOMAIN}"
-                    } else if (params.CLOUDFLARE_ENV == 'develop') {
-                        env.CF_TIER       = 'stg'
-                        env.WORKER_NAME   = "develop-lab-xsite-stg"
-                        env.WORKER_DOMAIN = "${env.WORKER_NAME}.${env.LAB_DOMAIN}"
-                    } else { // branch
-                        env.CF_TIER       = 'stg'
-                        env.WORKER_NAME   = "${slug}-lab-xsite-stg"
-                        env.WORKER_DOMAIN = "${env.WORKER_NAME}.${env.LAB_DOMAIN}"
+                    // beta/production are a deliberate manual action — only allowed from
+                    // develop, same rule as the company pipeline's DEPLOY_TARGET guard.
+                    if (params.DEPLOY_TARGET != 'staging' && !isDevelop) {
+                        error("DEPLOY_TARGET=${params.DEPLOY_TARGET} is only allowed from the 'develop' branch (current: '${branch}').")
+                    }
+
+                    if (params.DEPLOY_TARGET == 'production') {
+                        env.CLOUDFLARE_ENV = 'release'
+                        env.CF_TIER        = 'prod'
+                        env.WORKER_NAME    = 'lab-xsite-prod'
+                        env.WORKER_DOMAIN  = "www.${env.LAB_DOMAIN}"
+                    } else if (params.DEPLOY_TARGET == 'beta') {
+                        env.CLOUDFLARE_ENV = 'release'
+                        env.CF_TIER        = 'beta'
+                        env.WORKER_NAME    = 'lab-xsite-beta'
+                        env.WORKER_DOMAIN  = "beta.${env.LAB_DOMAIN}"
+                    } else if (isDevelop) {
+                        // staging + branch == develop -> the ONE writer of the shared KV
+                        env.CLOUDFLARE_ENV = 'develop'
+                        env.CF_TIER        = 'stg'
+                        env.WORKER_NAME    = 'develop-lab-xsite-stg'
+                        env.WORKER_DOMAIN  = "${env.WORKER_NAME}.${env.LAB_DOMAIN}"
+                    } else {
+                        // staging + any other branch -> reads the shared KV, no cron
+                        env.CLOUDFLARE_ENV = 'branch'
+                        env.CF_TIER        = 'stg'
+                        env.WORKER_NAME    = "${slug}-lab-xsite-stg"
+                        env.WORKER_DOMAIN  = "${env.WORKER_NAME}.${env.LAB_DOMAIN}"
                     }
 
                     env.BUILD_BRANCH = branch
                     currentBuild.description =
-                        "${params.CLOUDFLARE_ENV} · ${env.WORKER_NAME} · ${env.WORKER_DOMAIN}"
+                        "${branch} · ${env.CLOUDFLARE_ENV} · ${env.WORKER_NAME} · ${env.WORKER_DOMAIN}"
 
-                    echo "CLOUDFLARE_ENV=${params.CLOUDFLARE_ENV}  TIER=${env.CF_TIER}  " +
+                    echo "branch=${branch}  DEPLOY_TARGET=${params.DEPLOY_TARGET}  " +
+                         "CLOUDFLARE_ENV=${env.CLOUDFLARE_ENV}  TIER=${env.CF_TIER}  " +
                          "WORKER_NAME=${env.WORKER_NAME}  WORKER_DOMAIN=${env.WORKER_DOMAIN}"
                 }
             }
@@ -100,7 +115,7 @@ pipeline {
                 script {
                     docker.image(env.BUILD_IMAGE).inside {
                         withEnv([
-                            "CLOUDFLARE_ENV=${params.CLOUDFLARE_ENV}",
+                            "CLOUDFLARE_ENV=${env.CLOUDFLARE_ENV}",
                             "PUBLIC_BUILD_BRANCH=${env.BUILD_BRANCH}",
                             "PUBLIC_DEPLOY_TIER=${env.CF_TIER}",
                             "PUBLIC_BUILD_TIME=${sh(script: 'date -u +%FT%TZ', returnStdout: true).trim()}"
@@ -121,7 +136,7 @@ pipeline {
             steps {
                 script {
                     docker.image(env.BUILD_IMAGE).inside {
-                        withEnv(["CLOUDFLARE_ENV=${params.CLOUDFLARE_ENV}"]) {
+                        withEnv(["CLOUDFLARE_ENV=${env.CLOUDFLARE_ENV}"]) {
                             sh 'node scripts/check-target-env.mjs'
                         }
                     }
@@ -158,7 +173,7 @@ pipeline {
             echo "Deployed: https://${env.WORKER_DOMAIN}"
         }
         always {
-            echo "Build: ${params.CLOUDFLARE_ENV} → ${env.WORKER_NAME ?: '(not resolved)'}"
+            echo "Build: ${env.BUILD_BRANCH ?: '(unknown)'} (${env.CLOUDFLARE_ENV ?: '?'}) → ${env.WORKER_NAME ?: '(not resolved)'}"
         }
     }
 }
